@@ -24,7 +24,8 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.feature_selection import RFECV
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                               f1_score, confusion_matrix, ConfusionMatrixDisplay,
-                              roc_curve, auc)
+                              roc_curve, auc, classification_report,
+                              precision_recall_curve, average_precision_score)
 from imblearn.over_sampling import RandomOverSampler
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
@@ -35,11 +36,62 @@ df = pd.read_csv("/content/diabetes (1).csv")
 print(df.shape)
 print(df.head())
 
+# === Figure 1a/1b/1c: Dataset Overview Visualizations ===
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+# Statistical summary heatmap
+desc = df.describe().T
+sns.heatmap(desc[['mean', 'std', 'min', '25%', '50%', '75%', 'max']],
+            annot=True, fmt=".1f", cmap="YlOrRd", ax=axes[0])
+axes[0].set_title("Figure 1a: Statistical Summary Heatmap")
+# Zero/missing value bar chart (before NaN replacement)
+zero_cols_check = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
+zero_counts = (df[zero_cols_check] == 0).sum()
+axes[1].bar(zero_counts.index, zero_counts.values, color='steelblue')
+axes[1].set_title("Figure 1b: Zero Value Counts per Column")
+axes[1].set_xlabel("Column")
+axes[1].set_ylabel("Count")
+axes[1].tick_params(axis='x', rotation=45)
+for bar, val in zip(axes[1].patches, zero_counts.values):
+    axes[1].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
+                 str(val), ha='center', fontsize=9)
+# Target variable distribution
+target_counts = df['Outcome'].value_counts().sort_index()
+axes[2].bar(['No Diabetes (0)', 'Diabetes (1)'], target_counts.values,
+            color=['steelblue', 'salmon'])
+axes[2].set_title("Figure 1c: Target Variable Distribution")
+axes[2].set_ylabel("Count")
+for bar, val in zip(axes[2].patches, target_counts.values):
+    axes[2].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2,
+                 str(val), ha='center', fontsize=10)
+plt.tight_layout()
+plt.savefig("fig1_overview.png", dpi=300)
+plt.show()
+
 from google.colab import drive
 drive.mount('/content/drive')
 
 cols_with_zeros = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
 df[cols_with_zeros] = df[cols_with_zeros].replace(0, np.nan)
+
+# === Figure 2a/2b: Missing Value Visualizations ===
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+# Missing value heatmap
+sns.heatmap(df.isnull(), cbar=False, cmap='viridis', yticklabels=False, ax=axes[0])
+axes[0].set_title("Figure 2a: Missing Value Heatmap (Yellow = Missing)")
+# Missing percentage bar chart
+miss_pct = df.isnull().mean() * 100
+miss_pct = miss_pct[miss_pct > 0]
+axes[1].bar(miss_pct.index, miss_pct.values, color='tomato')
+axes[1].set_title("Figure 2b: Missing Value Percentage per Column")
+axes[1].set_xlabel("Column")
+axes[1].set_ylabel("Missing %")
+axes[1].tick_params(axis='x', rotation=45)
+for bar, val in zip(axes[1].patches, miss_pct.values):
+    axes[1].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3,
+                 f"{val:.1f}%", ha='center', fontsize=9)
+plt.tight_layout()
+plt.savefig("fig2_missing.png", dpi=300)
+plt.show()
 
 df.drop('Outcome', axis=1).hist(bins=20, figsize=(12, 8))
 plt.suptitle("Figure 2: Histogram of PIDD Attributes", fontsize=14)
@@ -67,6 +119,30 @@ plt.show()
 imputer = SimpleImputer(strategy='mean')
 df_imputed = pd.DataFrame(imputer.fit_transform(df), columns=df.columns)
 
+# === Figure 3a/3b: Before vs After Imputation Comparison ===
+cols_imputed = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+df[cols_imputed].boxplot(ax=axes[0])
+axes[0].set_title("Figure 3a: Before Imputation (with NaN)")
+axes[0].tick_params(axis='x', rotation=45)
+df_imputed[cols_imputed].boxplot(ax=axes[1])
+axes[1].set_title("Figure 3b: After Mean Imputation")
+axes[1].tick_params(axis='x', rotation=45)
+plt.suptitle("Before vs After Mean Imputation", fontsize=13)
+plt.tight_layout()
+plt.savefig("fig3_imputation_comparison.png", dpi=300)
+plt.show()
+
+# === Figure 3c: Pairplot of Key Features by Outcome ===
+key_cols = ['Glucose', 'BMI', 'Age', 'DiabetesPedigreeFunction', 'Outcome']
+pairplot_df = df_imputed[key_cols].copy()
+pairplot_df['Outcome'] = pairplot_df['Outcome'].astype(int)
+pair_fig = sns.pairplot(pairplot_df, hue='Outcome', palette={0: 'steelblue', 1: 'salmon'},
+                        plot_kws={'alpha': 0.5})
+pair_fig.fig.suptitle("Figure 3c: Pairplot of Key Features by Outcome", y=1.02)
+pair_fig.savefig("fig3c_pairplot.png", dpi=150, bbox_inches='tight')
+plt.show()
+
 def remove_outliers_iqr(data):
     df_clean = data.copy()
     for col in df_clean.select_dtypes(include=[np.number]).columns:
@@ -82,6 +158,39 @@ df_clean = remove_outliers_iqr(df_imputed)
 print("Rows after cleaning:", len(df_clean))
 print(df_clean['Outcome'].value_counts())
 
+# === Figure 4a: Box Plots Before vs After Outlier Removal ===
+cols_vis = ['Glucose', 'BMI', 'Age', 'BloodPressure']
+fig, axes = plt.subplots(2, len(cols_vis), figsize=(16, 8))
+for i, col in enumerate(cols_vis):
+    df_imputed[col].plot(kind='box', ax=axes[0, i])
+    axes[0, i].set_title(f"{col}\n(Before)")
+    df_clean[col].plot(kind='box', ax=axes[1, i])
+    axes[1, i].set_title(f"{col}\n(After)")
+axes[0, 0].set_ylabel("Before IQR Removal")
+axes[1, 0].set_ylabel("After IQR Removal")
+plt.suptitle("Figure 4a: Box Plots Before vs After IQR Outlier Removal", fontsize=13)
+plt.tight_layout()
+plt.savefig("fig4_outlier_boxplots.png", dpi=300)
+plt.show()
+
+# === Figure 4b/4c: Data Size Reduction and Outcome Distribution ===
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+bar_vals = [len(df_imputed), len(df_clean)]
+bar_labels = ['Before Cleaning', 'After Cleaning']
+bars = axes[0].bar(bar_labels, bar_vals, color=['steelblue', 'green'])
+axes[0].set_title("Figure 4b: Row Count Before vs After IQR Cleaning")
+axes[0].set_ylabel("Number of Rows")
+for bar, val in zip(bars, bar_vals):
+    axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2,
+                 str(val), ha='center', fontsize=11)
+outcome_counts = df_clean['Outcome'].value_counts().sort_index()
+axes[1].pie(outcome_counts.values, labels=['No Diabetes', 'Diabetes'],
+            autopct='%1.1f%%', colors=['steelblue', 'salmon'], startangle=90)
+axes[1].set_title("Figure 4c: Outcome Distribution After Cleaning")
+plt.tight_layout()
+plt.savefig("fig4bc_cleaning_summary.png", dpi=300)
+plt.show()
+
 df_clean.drop('Outcome', axis=1).hist(bins=20, figsize=(12, 8))
 plt.suptitle("Figure 5: Feature Distributions After IQR Cleaning", fontsize=14)
 plt.tight_layout()
@@ -95,11 +204,61 @@ ros = RandomOverSampler(random_state=42)
 X_resampled, y_resampled = ros.fit_resample(X, y)
 print("After oversampling:", pd.Series(y_resampled).value_counts())
 
+# === Figure 5a/5b/5c: Class Balance Before vs After Oversampling ===
+fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+before_counts = y.value_counts().sort_index()
+after_counts = pd.Series(y_resampled).value_counts().sort_index()
+axes[0].bar(['No Diabetes (0)', 'Diabetes (1)'], before_counts.values,
+            color=['steelblue', 'salmon'])
+axes[0].set_title("Figure 5a: Before Oversampling")
+axes[0].set_ylabel("Count")
+for bar, val in zip(axes[0].patches, before_counts.values):
+    axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                 str(val), ha='center', fontsize=10)
+axes[1].bar(['No Diabetes (0)', 'Diabetes (1)'], after_counts.values,
+            color=['steelblue', 'salmon'])
+axes[1].set_title("Figure 5b: After Oversampling")
+axes[1].set_ylabel("Count")
+for bar, val in zip(axes[1].patches, after_counts.values):
+    axes[1].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                 str(val), ha='center', fontsize=10)
+axes[2].pie(after_counts.values, labels=['No Diabetes', 'Diabetes'],
+            autopct='%1.1f%%', colors=['steelblue', 'salmon'], startangle=90)
+axes[2].set_title("Figure 5c: Balanced Class Distribution")
+plt.suptitle("Figure 5: Class Distribution Before vs After Oversampling", fontsize=13)
+plt.tight_layout()
+plt.savefig("fig5_oversample.png", dpi=300)
+plt.show()
+
 
 X_train, X_test, y_train, y_test = train_test_split(
     X_resampled, y_resampled, test_size=0.30, random_state=42
 )
 print(f"Train: {X_train.shape}, Test: {X_test.shape}")
+
+# === Figure 6a/6b/6c: Train/Test Split Visualization ===
+fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+# Stacked bar chart
+axes[0].bar(['Dataset'], [len(X_train)], label='Train', color='steelblue')
+axes[0].bar(['Dataset'], [len(X_test)], bottom=[len(X_train)], label='Test', color='salmon')
+axes[0].set_title("Figure 6a: Train/Test Split Size")
+axes[0].set_ylabel("Count")
+axes[0].legend()
+axes[0].text(0, len(X_train) / 2, f"Train\n{len(X_train)}", ha='center', color='white', fontsize=11)
+axes[0].text(0, len(X_train) + len(X_test) / 2, f"Test\n{len(X_test)}", ha='center', color='white', fontsize=11)
+# Train class distribution pie
+train_counts = pd.Series(y_train).value_counts().sort_index()
+axes[1].pie(train_counts.values, labels=['Class 0', 'Class 1'],
+            autopct='%1.1f%%', colors=['steelblue', 'salmon'], startangle=90)
+axes[1].set_title("Figure 6b: Train Set Class Distribution")
+# Test class distribution pie
+test_counts = pd.Series(y_test).value_counts().sort_index()
+axes[2].pie(test_counts.values, labels=['Class 0', 'Class 1'],
+            autopct='%1.1f%%', colors=['steelblue', 'salmon'], startangle=90)
+axes[2].set_title("Figure 6c: Test Set Class Distribution")
+plt.tight_layout()
+plt.savefig("fig6_split.png", dpi=300)
+plt.show()
 
 X_raw = df.drop('Outcome', axis=1).fillna(0)
 y_raw = df['Outcome']
@@ -114,6 +273,43 @@ for name, model in [
     print(f"{name} Baseline → Acc: {accuracy_score(y_te,p):.4f} | F1: {f1_score(y_te,p):.4f}")
 # XGBoost  → 0.7532 | LightGBM → 0.7359
 
+# === Figure 7a/7b/7c: Baseline Model Comparison ===
+baseline_results = {}
+for bl_name, bl_model in [
+    ("XGBoost",  XGBClassifier(random_state=42, use_label_encoder=False, eval_metric='logloss')),
+    ("LightGBM", LGBMClassifier(random_state=42))
+]:
+    bl_model.fit(X_tr, y_tr)
+    bl_preds = bl_model.predict(X_te)
+    baseline_results[bl_name] = {
+        'acc': accuracy_score(y_te, bl_preds),
+        'f1': f1_score(y_te, bl_preds),
+        'preds': bl_preds,
+        'model': bl_model
+    }
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+bl_names = list(baseline_results.keys())
+bl_accs = [baseline_results[n]['acc'] for n in bl_names]
+bl_f1s = [baseline_results[n]['f1'] for n in bl_names]
+x_pos = np.arange(len(bl_names))
+width = 0.35
+axes[0].bar(x_pos - width / 2, bl_accs, width, label='Accuracy', color='steelblue')
+axes[0].bar(x_pos + width / 2, bl_f1s, width, label='F1 Score', color='salmon')
+axes[0].set_title("Figure 7a: Baseline Model Comparison")
+axes[0].set_xticks(x_pos)
+axes[0].set_xticklabels(bl_names)
+axes[0].set_ylim(0, 1)
+axes[0].set_ylabel("Score")
+axes[0].legend()
+for i, (bl_name, bl_res) in enumerate(baseline_results.items()):
+    ConfusionMatrixDisplay(confusion_matrix(y_te, bl_res['preds'])).plot(
+        ax=axes[i + 1], colorbar=False)
+    axes[i + 1].set_title(f"Figure 7{'b' if i == 0 else 'c'}: {bl_name} Baseline CM")
+plt.tight_layout()
+plt.savefig("fig7_baseline.png", dpi=300)
+plt.show()
+
 gb = GradientBoostingClassifier(random_state=42)
 gb.fit(X_resampled, y_resampled)
 
@@ -126,11 +322,54 @@ plt.tight_layout()
 plt.savefig("fig7_shap.png", dpi=300, bbox_inches='tight')
 plt.show()
 
+# === Figure 8a: SHAP Beeswarm (Dot) Plot ===
+shap.summary_plot(shap_values, X_resampled, show=False)
+plt.title("Figure 8a: SHAP Beeswarm Plot")
+plt.tight_layout()
+plt.savefig("fig8a_shap_beeswarm.png", dpi=300, bbox_inches='tight')
+plt.show()
+
+# === Figure 8b/8c: SHAP Dependence Plots for Top 2 Features ===
+shap_abs_mean = np.abs(shap_values).mean(axis=0)
+top2_idx = np.argsort(shap_abs_mean)[::-1][:2]
+top2_features = list(X_resampled.columns[top2_idx])
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+for ax, feat in zip(axes, top2_features):
+    shap.dependence_plot(feat, shap_values, X_resampled, ax=ax, show=False)
+    ax.set_title(f"Figure 8b/c: SHAP Dependence — {feat}")
+plt.tight_layout()
+plt.savefig("fig8bc_shap_dependence.png", dpi=300, bbox_inches='tight')
+plt.show()
+
 rfe = RFECV(estimator=GradientBoostingClassifier(random_state=42),
             step=1, cv=5, min_features_to_select=1, scoring='accuracy')
 rfe.fit(X_resampled, y_resampled)
 rfe_features = list(X_resampled.columns[rfe.support_])
 print("RFE Selected Features:", rfe_features)
+
+# === Figure 9a: RFE Cross-Validation Score Plot ===
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+n_features_range = range(1, len(X_resampled.columns) + 1)
+rfe_cv_scores = rfe.cv_results_['mean_test_score']
+axes[0].plot(n_features_range, rfe_cv_scores, marker='o', color='steelblue')
+axes[0].axvline(x=rfe.n_features_, color='red', linestyle='--',
+                label=f'Optimal: {rfe.n_features_} features')
+axes[0].set_title("Figure 9a: RFE Cross-Validation Accuracy vs Number of Features")
+axes[0].set_xlabel("Number of Features")
+axes[0].set_ylabel("CV Accuracy")
+axes[0].legend()
+
+# === Figure 9b: Feature Ranking Bar Chart ===
+feature_rankings = pd.Series(rfe.ranking_, index=X_resampled.columns).sort_values()
+colors_rfe = ['green' if r == 1 else 'steelblue' for r in feature_rankings.values]
+axes[1].barh(feature_rankings.index, feature_rankings.values, color=colors_rfe)
+axes[1].set_title("Figure 9b: RFE Feature Rankings (1 = Selected)")
+axes[1].set_xlabel("Ranking")
+axes[1].axvline(x=1, color='red', linestyle='--', label='Selected (rank=1)')
+axes[1].legend()
+plt.tight_layout()
+plt.savefig("fig9_rfe.png", dpi=300)
+plt.show()
 
 from boruta import BorutaPy
 
@@ -150,6 +389,41 @@ top5 = [f for f, _ in Counter(flat).most_common(5)]
 boruta_features = list(X_resampled.columns[top5])
 print("Boruta Selected Features:", boruta_features)
 # Expected: Glucose, SkinThickness, BMI, DiabetesPedigreeFunction, Age
+
+# === Figure 10a: Boruta Feature Selection Frequency Heatmap ===
+feature_names = list(X_resampled.columns)
+freq_matrix = np.zeros((len(feature_names), 5))
+for fold_i, fold_selected in enumerate(all_selected):
+    for feat_idx in fold_selected:
+        freq_matrix[feat_idx, fold_i] = 1
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+freq_df = pd.DataFrame(freq_matrix, index=feature_names,
+                       columns=[f"Fold {i+1}" for i in range(5)])
+sns.heatmap(freq_df, annot=True, fmt=".0f", cmap="Blues",
+            linewidths=0.5, ax=axes[0], cbar_kws={'label': 'Selected (1=Yes)'})
+axes[0].set_title("Figure 10a: Boruta Feature Selection Frequency Across Folds")
+axes[0].set_xlabel("Fold")
+axes[0].set_ylabel("Feature")
+
+# === Figure 10b: Boruta vs RFE Feature Comparison ===
+all_features = list(X_resampled.columns)
+boruta_selected = [1 if f in boruta_features else 0 for f in all_features]
+rfe_selected = [1 if f in rfe_features else 0 for f in all_features]
+x_feat = np.arange(len(all_features))
+width_feat = 0.35
+axes[1].bar(x_feat - width_feat / 2, boruta_selected, width_feat,
+            label='Boruta', color='steelblue', alpha=0.8)
+axes[1].bar(x_feat + width_feat / 2, rfe_selected, width_feat,
+            label='RFE', color='salmon', alpha=0.8)
+axes[1].set_title("Figure 10b: Boruta vs RFE Feature Selection Comparison")
+axes[1].set_xticks(x_feat)
+axes[1].set_xticklabels(all_features, rotation=45, ha='right')
+axes[1].set_ylabel("Selected (1=Yes)")
+axes[1].legend()
+plt.tight_layout()
+plt.savefig("fig10_boruta.png", dpi=300)
+plt.show()
 
 feature_sets = {"Boruta": boruta_features, "RFE": rfe_features}
 final_models = {}
@@ -190,6 +464,131 @@ plt.legend(); plt.tight_layout()
 plt.savefig("fig10c_roc.png", dpi=300)
 plt.show()
 # Expected: LightGBM AUC ≈ 0.9052
+
+# === Figure 11a: Comprehensive Model Comparison Bar Chart ===
+model_comparison = {}
+for key, (m, feats) in final_models.items():
+    preds = m.predict(X_test[feats])
+    model_comparison[key] = {
+        'acc': accuracy_score(y_test, preds),
+        'f1': f1_score(y_test, preds, average='macro'),
+        'time': 0  # training time already logged above
+    }
+
+model_names = list(model_comparison.keys())
+comp_accs = [model_comparison[k]['acc'] for k in model_names]
+comp_f1s = [model_comparison[k]['f1'] for k in model_names]
+x_comp = np.arange(len(model_names))
+width_comp = 0.35
+
+plt.figure(figsize=(12, 5))
+plt.bar(x_comp - width_comp / 2, comp_accs, width_comp, label='Accuracy', color='steelblue')
+plt.bar(x_comp + width_comp / 2, comp_f1s, width_comp, label='Macro F1', color='salmon')
+plt.title("Figure 11a: Comprehensive Model Comparison (Accuracy & F1)")
+plt.xticks(x_comp, model_names, rotation=15, ha='right')
+plt.ylim(0, 1)
+plt.ylabel("Score")
+plt.legend()
+plt.tight_layout()
+plt.savefig("fig11a_model_comparison.png", dpi=300)
+plt.show()
+
+# === Figure 11b: Precision-Recall Curves ===
+plt.figure(figsize=(8, 6))
+for name, m, f in [("XGBoost", xgb_m, xgb_f), ("LightGBM", lgbm_m, lgbm_f)]:
+    prec, rec, _ = precision_recall_curve(y_test, m.predict_proba(X_test[f])[:, 1])
+    ap = average_precision_score(y_test, m.predict_proba(X_test[f])[:, 1])
+    plt.plot(rec, prec, label=f"{name} (AP={ap:.4f})")
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.title("Figure 11b: Precision-Recall Curves")
+plt.legend()
+plt.tight_layout()
+plt.savefig("fig11b_pr_curves.png", dpi=300)
+plt.show()
+
+# === Figure 11c: Classification Report Heatmap ===
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+for ax, (name, m, f) in zip(axes, [("XGBoost", xgb_m, xgb_f), ("LightGBM", lgbm_m, lgbm_f)]):
+    report = classification_report(y_test, m.predict(X_test[f]),
+                                   target_names=['No Diabetes', 'Diabetes'],
+                                   output_dict=True)
+    report_df = pd.DataFrame(report).T.drop(columns=['support'], errors='ignore')
+    report_df = report_df.loc[['No Diabetes', 'Diabetes', 'macro avg', 'weighted avg']]
+    sns.heatmap(report_df.astype(float), annot=True, fmt=".3f",
+                cmap="Blues", ax=ax, vmin=0, vmax=1)
+    ax.set_title(f"Figure 11c: Classification Report Heatmap — {name}")
+plt.tight_layout()
+plt.savefig("fig11c_classification_report.png", dpi=300)
+plt.show()
+
+# === Figure 12: Summary Dashboard ===
+fig = plt.figure(figsize=(18, 12))
+
+# Best model accuracy text
+ax1 = fig.add_subplot(2, 3, 1)
+best_model_key = max(model_comparison, key=lambda k: model_comparison[k]['acc'])
+best_acc = model_comparison[best_model_key]['acc']
+ax1.text(0.5, 0.5, f"Best Model:\n{best_model_key}\n\nAccuracy: {best_acc*100:.2f}%",
+         ha='center', va='center', fontsize=14, fontweight='bold',
+         bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+ax1.axis('off')
+ax1.set_title("Best Model Summary", fontsize=12)
+
+# Feature importance from SHAP
+ax2 = fig.add_subplot(2, 3, 2)
+shap_importance = pd.Series(np.abs(shap_values).mean(axis=0),
+                             index=X_resampled.columns).sort_values(ascending=True)
+ax2.barh(shap_importance.index, shap_importance.values, color='steelblue')
+ax2.set_title("SHAP Feature Importance Ranking", fontsize=12)
+ax2.set_xlabel("Mean |SHAP|")
+
+# Class balance visualization
+ax3 = fig.add_subplot(2, 3, 3)
+after_counts_dash = pd.Series(y_resampled).value_counts().sort_index()
+ax3.pie(after_counts_dash.values, labels=['No Diabetes', 'Diabetes'],
+        autopct='%1.1f%%', colors=['steelblue', 'salmon'], startangle=90)
+ax3.set_title("Class Balance (After Oversampling)", fontsize=12)
+
+# ROC comparison
+ax4 = fig.add_subplot(2, 3, 4)
+for name, m, f in [("XGBoost", xgb_m, xgb_f), ("LightGBM", lgbm_m, lgbm_f)]:
+    fpr_d, tpr_d, _ = roc_curve(y_test, m.predict_proba(X_test[f])[:, 1])
+    ax4.plot(fpr_d, tpr_d, label=f"{name} (AUC={auc(fpr_d, tpr_d):.4f})")
+ax4.plot([0, 1], [0, 1], 'k--')
+ax4.set_xlabel("FPR")
+ax4.set_ylabel("TPR")
+ax4.set_title("ROC Curve Comparison", fontsize=12)
+ax4.legend(fontsize=9)
+
+# Data pipeline summary
+ax5 = fig.add_subplot(2, 3, 5)
+pipeline_stages = ['Raw Data', 'After NaN\nReplacement', 'After\nImputation',
+                   'After IQR\nCleaning', 'After\nOversampling']
+pipeline_counts = [len(df), len(df), len(df_imputed), len(df_clean), len(X_resampled)]
+ax5.bar(pipeline_stages, pipeline_counts, color='teal', alpha=0.7)
+ax5.set_title("Data Pipeline: Row Counts at Each Stage", fontsize=12)
+ax5.set_ylabel("Number of Rows")
+ax5.tick_params(axis='x', rotation=20)
+for bar, val in zip(ax5.patches, pipeline_counts):
+    ax5.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5,
+             str(val), ha='center', fontsize=9)
+
+# Model accuracy comparison
+ax6 = fig.add_subplot(2, 3, 6)
+ax6.bar(model_names, comp_accs, color=['steelblue', 'salmon', 'green', 'orange'])
+ax6.set_title("Final Model Accuracy Comparison", fontsize=12)
+ax6.set_ylabel("Accuracy")
+ax6.set_ylim(0, 1)
+ax6.tick_params(axis='x', rotation=15)
+for bar, val in zip(ax6.patches, comp_accs):
+    ax6.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
+             f"{val*100:.1f}%", ha='center', fontsize=9)
+
+plt.suptitle("Figure 12: Summary Dashboard — Diabetes Prediction Pipeline", fontsize=16, y=1.01)
+plt.tight_layout()
+plt.savefig("fig12_summary_dashboard.png", dpi=300, bbox_inches='tight')
+plt.show()
 
 from google.colab import files
 import os
