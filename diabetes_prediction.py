@@ -36,6 +36,9 @@ df = pd.read_csv("/content/diabetes (1).csv")
 print(df.shape)
 print(df.head())
 
+# Define the columns that will have zeros replaced — used across multiple visualizations
+cols_with_zeros = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
+
 # === Figure 1a/1b/1c: Dataset Overview Visualizations ===
 fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 # Statistical summary heatmap
@@ -44,8 +47,7 @@ sns.heatmap(desc[['mean', 'std', 'min', '25%', '50%', '75%', 'max']],
             annot=True, fmt=".1f", cmap="YlOrRd", ax=axes[0])
 axes[0].set_title("Figure 1a: Statistical Summary Heatmap")
 # Zero/missing value bar chart (before NaN replacement)
-zero_cols_check = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
-zero_counts = (df[zero_cols_check] == 0).sum()
+zero_counts = (df[cols_with_zeros] == 0).sum()
 axes[1].bar(zero_counts.index, zero_counts.values, color='steelblue')
 axes[1].set_title("Figure 1b: Zero Value Counts per Column")
 axes[1].set_xlabel("Column")
@@ -70,7 +72,6 @@ plt.show()
 from google.colab import drive
 drive.mount('/content/drive')
 
-cols_with_zeros = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
 df[cols_with_zeros] = df[cols_with_zeros].replace(0, np.nan)
 
 # === Figure 2a/2b: Missing Value Visualizations ===
@@ -120,12 +121,11 @@ imputer = SimpleImputer(strategy='mean')
 df_imputed = pd.DataFrame(imputer.fit_transform(df), columns=df.columns)
 
 # === Figure 3a/3b: Before vs After Imputation Comparison ===
-cols_imputed = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
 fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-df[cols_imputed].boxplot(ax=axes[0])
+df[cols_with_zeros].boxplot(ax=axes[0])
 axes[0].set_title("Figure 3a: Before Imputation (with NaN)")
 axes[0].tick_params(axis='x', rotation=45)
-df_imputed[cols_imputed].boxplot(ax=axes[1])
+df_imputed[cols_with_zeros].boxplot(ax=axes[1])
 axes[1].set_title("Figure 3b: After Mean Imputation")
 axes[1].tick_params(axis='x', rotation=45)
 plt.suptitle("Before vs After Mean Imputation", fontsize=13)
@@ -334,9 +334,9 @@ shap_abs_mean = np.abs(shap_values).mean(axis=0)
 top2_idx = np.argsort(shap_abs_mean)[::-1][:2]
 top2_features = list(X_resampled.columns[top2_idx])
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-for ax, feat in zip(axes, top2_features):
+for ax, (fig_label, feat) in zip(axes, [("Figure 8b", top2_features[0]), ("Figure 8c", top2_features[1])]):
     shap.dependence_plot(feat, shap_values, X_resampled, ax=ax, show=False)
-    ax.set_title(f"Figure 8b/c: SHAP Dependence — {feat}")
+    ax.set_title(f"{fig_label}: SHAP Dependence — {feat}")
 plt.tight_layout()
 plt.savefig("fig8bc_shap_dependence.png", dpi=300, bbox_inches='tight')
 plt.show()
@@ -561,7 +561,7 @@ ax4.set_ylabel("TPR")
 ax4.set_title("ROC Curve Comparison", fontsize=12)
 ax4.legend(fontsize=9)
 
-# Data pipeline summary
+# Data pipeline summary (NaN replacement and imputation preserve row count)
 ax5 = fig.add_subplot(2, 3, 5)
 pipeline_stages = ['Raw Data', 'After NaN\nReplacement', 'After\nImputation',
                    'After IQR\nCleaning', 'After\nOversampling']
